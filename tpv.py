@@ -17,6 +17,7 @@ def cmd_train(args):
     epochs = make_epochs(raw, tmin=0.0, tmax=4.0)
     X = epochs.get_data()  # shape (n_epochs, n_channels, n_times)
     y = epochs.events[:, -1]  # adjust to your event_id mapping
+    print(f"Shape de X : {X.shape}, Shape de y : {y.shape}")
     pipe = build_pipeline(sfreq=int(raw.info['sfreq']), reducer='csp', reducer_params={'n_components':4})
     mean_score, scores = train_and_evaluate(pipe, X, y, cv=5)
     print("cross_val_score:", mean_score, scores)

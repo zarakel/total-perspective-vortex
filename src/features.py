@@ -1,58 +1,68 @@
 import numpy as np
-from scipy.signal import welch
 import pywt
 
-def compute_psd_epoch(epoch, sfreq, bands=None, nperseg=256):
-    """
-    epoch: array (n_channels, n_times)
-    returns: band power per channel (n_channels * n_bands)
-    """
-    if bands is None:
-        bands = {'theta':(4,8), 'alpha':(8,13), 'beta':(13,30), 'mu':(8,12)}
-    n_ch = epoch.shape[0]
-    features = []
-    for ch in range(n_ch):
-        f, Pxx = welch(epoch[ch], fs=sfreq, nperseg=nperseg)
-        bandpowers = []
-        for (bmin,bmax) in bands.values():
-            idx = np.logical_and(f>=bmin, f<=bmax)
-            bandpowers.append(Pxx[idx].mean())
-        features.append(bandpowers)
-    return np.asarray(features).ravel()
+def compute_psd_epoch(epoch, sfreq, bands):
+    """Calcule la puissance moyenne dans les bandes spécifiées."""
+    from scipy.signal import welch
+    psd_feats = []
+    for ch in epoch:
+        freqs, psd = welch(ch, sfreq, nperseg=min(256, len(ch)))
+        band_powers = []
+        for (fmin, fmax) in bands:
+            mask = (freqs >= fmin) & (freqs <= fmax)
+            band_powers.append(np.mean(psd[mask]))
+        psd_feats.append(band_powers)
+    return np.asarray(psd_feats).flatten()
 
-def compute_wavelet_epoch(epoch, wavelet='db4', level=4):
+def compute_wavelet_epoch(signal, wavelet='db4', level=3):
     """
-    Use discrete wavelet transform coefficients energy as features per channel.
+    Calcule la décomposition en ondelettes discrètes pour un signal 1D
+    et retourne un petit vecteur de caractéristiques résumées (énergies par niveau).
     """
-    n_ch = epoch.shape[0]
-    feats = []
-    for ch in range(n_ch):
-        coeffs = pywt.wavedec(epoch[ch], wavelet, level=level)
-        # energy per level
-        energies = [np.sum(c**2)/len(c) for c in coeffs]
-        feats.append(energies)
-    return np.asarray(feats).ravel()
+    signal = np.asarray(signal, dtype=np.float32)
+
+    # Si signal constant ou nul
+    if np.allclose(signal, 0):
+        return np.zeros(level + 1, dtype=np.float32)
+
+    try:
+        coeffs = pywt.wavedec(signal, wavelet=wavelet, level=level)
+        # ⚡ On résume chaque niveau d’ondelette par son énergie moyenne absolue
+        energies = np.array([np.mean(np.abs(c)) for c in coeffs], dtype=np.float32)
+        return energies
+    except Exception as e:
+        print(f"[⚠️ Wavelet failed for signal of shape {signal.shape}: {e}]")
+        return np.zeros(level + 1, dtype=np.float32)
+
 
 class FeatureExtractor:
-    """
-    sklearn-like transformer that computes concatenated features (PSD + wavelet)
-    """
-    def __init__(self, sfreq, use_wavelet=True, bands=None):
+    def __init__(self, sfreq, use_wavelet=True):
         self.sfreq = sfreq
         self.use_wavelet = use_wavelet
-        self.bands = bands
+        self.bands = [(8, 12), (12, 16), (16, 25), (25, 30)]
 
     def fit(self, X, y=None):
         return self
 
     def transform(self, X):
-        # X expected shape: (n_epochs, n_channels, n_times)
         feats = []
         for epoch in X:
-            p = compute_psd_epoch(epoch, self.sfreq, bands=self.bands)
+            p = compute_psd_epoch(epoch, self.sfreq, self.bands)
+
             if self.use_wavelet:
-                w = compute_wavelet_epoch(epoch)
-                feats.append(np.concatenate([p, w]))
+                w_epoch = []
+                for ch in epoch:
+                    w = compute_wavelet_epoch(ch)
+                    if w is None or not np.any(np.isfinite(w)):
+                        w = np.zeros(64)
+                    w_epoch.append(w)
+
+                # Concatène tous les canaux + PSD
+                w_epoch = np.concatenate(w_epoch)
+                feats.append(np.concatenate([p, w_epoch]))
             else:
                 feats.append(p)
-        return np.asarray(feats)
+
+        feats = np.asarray(feats)
+        print(f"✅ FeatureExtractor output shape: {feats.shape}")
+        return feats

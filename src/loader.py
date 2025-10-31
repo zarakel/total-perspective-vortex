@@ -20,11 +20,25 @@ def load_physionet(subject:int, runs:list, preload=True):
         pass
     return raw
 
-def make_epochs(raw, tmin=0.0, tmax=4.0, event_id=None, preload=True):
-    events, event_id_map = mne.events_from_annotations(raw)
-    if event_id is None:
-        event_id = event_id_map
-    picks = mne.pick_types(raw.info, meg=False, eeg=True, stim=False)
-    epochs = mne.Epochs(raw, events, event_id=event_id, tmin=tmin, tmax=tmax, picks=picks, preload=preload)
-    # returns data as numpy: shape (n_epochs, n_channels, n_times)
+def make_epochs(raw, tmin=0.0, tmax=4.0, preload=True):
+    import mne
+    import numpy as np
+
+    # Extraire les événements
+    events, event_id = mne.events_from_annotations(raw)
+
+    # Filtrer uniquement T1 et T2 (main gauche / main droite)
+    # → tu peux ajuster selon ton besoin
+    event_id = {k: v for k, v in event_id.items() if k in ["T1", "T2"]}
+
+    if len(event_id) < 2:
+        raise ValueError(f"Pas assez de classes valides (trouvées : {list(event_id.keys())})")
+
+    print(f"Événements conservés : {list(event_id.keys())}")
+
+    # Créer les epochs
+    picks = mne.pick_types(raw.info, eeg=True, exclude='bads')
+    epochs = mne.Epochs(raw, events, event_id=event_id, tmin=tmin, tmax=tmax, picks=picks, preload=preload, baseline=None)
+
     return epochs
+

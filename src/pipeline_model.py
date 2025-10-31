@@ -27,5 +27,7 @@ def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None):
     return pipe
 
 def train_and_evaluate(pipe, X, y, cv=5):
+    import numpy as np
+    print("Unique labels in y:", np.unique(y))
     scores = cross_val_score(pipe, X, y, cv=cv, n_jobs=1)
     return scores.mean(), scores
