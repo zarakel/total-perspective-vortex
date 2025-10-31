@@ -1,6 +1,7 @@
-src/pycache/
+src/__pycache__/
 src/MNE-sample*/
 .env
 .venv/
 MNE-sample*/
-pycache/
+__pycache__/
+
