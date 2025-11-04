@@ -1,44 +1,72 @@
 # src/pipeline_model.py
-import joblib
 from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score
-from sklearn.preprocessing import StandardScaler  # ✅ ajout
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from src.features import FeatureExtractor
+from src.csp_custom import CSP
+import joblib as _joblib
+import numpy as np
+from sklearn.model_selection import StratifiedKFold, cross_val_score, GridSearchCV
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
 
-from .features import FeatureExtractor
-from .csp_custom import CSP
-
-def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None):
+def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None, memory=None, use_features=False):
+    """
+    Construis la pipeline correctement :
+    - si reducer == 'csp' et use_features False : raw -> CSP -> scaler -> clf
+    - si use_features True : raw -> FeatureExtractor -> scaler -> clf
+    (on n'essaie pas de mettre CSP après FeatureExtractor)
+    """
     if reducer_params is None:
         reducer_params = {}
     if classifier is None:
-        classifier = LogisticRegression(max_iter=500)
+        classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
 
     steps = []
-    # Étape 1 : extraction de features (inclut les wavelets)
-    steps.append(('fe', FeatureExtractor(sfreq=sfreq, use_wavelet=True)))
-
-    # Étape 2 : réduction de dimension (CSP ou PCA)
-    if reducer == 'pca':
-        steps.append(('reducer', PCA(**reducer_params)))
-    elif reducer == 'csp':
-        steps.append(('reducer', CSP(**reducer_params)))
+    if use_features:
+        # Feature-based approach
+        steps.append(('fe', FeatureExtractor(sfreq=sfreq, **reducer_params.get('fe', {}))))
+        steps.append(('scaler', StandardScaler()))
+        steps.append(('clf', classifier))
     else:
-        raise ValueError("reducer must be 'pca' or 'csp'")
+        # CSP-based approach (expects raw epochs input)
+        if reducer == 'pca':
+            steps.append(('reducer', PCA(**reducer_params.get('pca', {}))))
+        elif reducer == 'csp':
+            steps.append(('reducer', CSP(**reducer_params.get('csp', {}))))
+        else:
+            raise ValueError("reducer must be 'pca' or 'csp' when use_features is False")
+        steps.append(('scaler', StandardScaler()))
+        steps.append(('clf', classifier))
 
-    # Étape 3 : normalisation pour stabiliser la variance
-    steps.append(('scaler', StandardScaler()))
-
-    # Étape 4 : classifieur
-    steps.append(('clf', classifier))
-
-    pipe = Pipeline(steps)
+    pipe = Pipeline(steps, memory=_joblib.Memory(location=memory) if memory else None)
     return pipe
 
-
-def train_and_evaluate(pipe, X, y, cv=5):
-    import numpy as np
+def train_and_evaluate(pipe, X, y, cv=5, tune=False, param_grid=None, n_jobs=-1, scoring='balanced_accuracy'):
     print("Unique labels in y:", np.unique(y))
-    scores = cross_val_score(pipe, X, y, cv=cv, n_jobs=1)
-    return scores.mean(), scores
+    skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
+
+    if tune:
+        if param_grid is None:
+            param_grid = [
+                {'reducer__n_components': [4, 6, 8],
+                 'clf': [LogisticRegression(max_iter=1000, class_weight='balanced')],
+                 'clf__C': [0.01, 0.1, 1, 10]},
+                {'reducer__n_components': [4, 6, 8],
+                 'clf': [SVC()],
+                 'clf__C': [0.1, 1],
+                 'clf__kernel': ['rbf', 'linear']},
+                {'reducer__n_components': [4, 6, 8],
+                 'clf': [RandomForestClassifier()],
+                 'clf__n_estimators': [50, 100]}
+            ]
+        gs = GridSearchCV(pipe, param_grid, cv=skf, n_jobs=n_jobs, scoring=scoring, refit=True, verbose=2)
+        gs.fit(X, y)
+        print("Best params:", gs.best_params_, "best score:", gs.best_score_)
+        best_est = gs.best_estimator_
+        scores = cross_val_score(best_est, X, y, cv=skf, n_jobs=n_jobs, scoring=scoring)
+        return gs.best_score_, scores, gs
+    else:
+        scores = cross_val_score(pipe, X, y, cv=skf, n_jobs=n_jobs, scoring=scoring)
+        return scores.mean(), scores

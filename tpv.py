@@ -3,12 +3,12 @@ import argparse
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+import joblib
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from src.loader import load_physionet, make_epochs
 from src.preprocessing import bandpass_filter, visualize_raw
 from src.pipeline_model import build_pipeline, train_and_evaluate
 from src.stream_simulator import stream_epochs
-import joblib
 
 def plot_cv_scores(scores):
     """Affiche les scores de validation croisée."""
@@ -22,6 +22,7 @@ def plot_cv_scores(scores):
     plt.tight_layout()
     plt.show(block=True)
     input("Appuie sur Entrée pour fermer les graphiques...")
+
 def plot_confusion(y_true, y_pred, title="Confusion matrix"):
     """Affiche une matrice de confusion."""
     cm = confusion_matrix(y_true, y_pred)
@@ -31,26 +32,47 @@ def plot_confusion(y_true, y_pred, title="Confusion matrix"):
     plt.tight_layout()
     plt.show(block=True)
     input("Appuie sur Entrée pour fermer les graphiques...")
+
 def cmd_train(args):
     raw = load_physionet(args.subject, args.runs)
     if args.show_raw:
         visualize_raw(raw)
     raw = bandpass_filter(raw, l_freq=8.0, h_freq=30.0)
-    epochs = make_epochs(raw, tmin=0.0, tmax=4.0)
+
+    print(f"Using window_sec={args.window_sec} overlap={args.overlap}")
+    epochs = make_epochs(raw, tmin=0.0, tmax=4.0, window_sec=args.window_sec, overlap=args.overlap)
     X = epochs.get_data()
     y = epochs.events[:, -1]
 
     print(f"Shape de X : {X.shape}, Shape de y : {y.shape}")
-    pipe = build_pipeline(
-        sfreq=int(raw.info['sfreq']),
-        reducer='csp',
-        reducer_params={'n_components': 8}
-    )
+
+    # build pipeline, try to pass memory if supported by build_pipeline
+    try:
+        pipe = build_pipeline(
+            sfreq=int(raw.info['sfreq']),
+            reducer='csp',
+            reducer_params={'n_components': 8},
+            memory=args.memory
+        )
+    except TypeError:
+        pipe = build_pipeline(
+            sfreq=int(raw.info['sfreq']),
+            reducer='csp',
+            reducer_params={'n_components': 8}
+        )
 
     # ✅ Validation croisée + visualisation
     mean_score, scores = train_and_evaluate(pipe, X, y, cv=5)
     print("cross_val_score:", mean_score, scores)
     plot_cv_scores(scores)
+
+    if getattr(args, "tune", False):
+        best_score, scores, gs = train_and_evaluate(pipe, X, y, cv=5, tune=True)
+        print("GridSearch best score:", best_score)
+        pipe = gs.best_estimator_
+    else:
+        mean_score, scores = train_and_evaluate(pipe, X, y, cv=5)
+        print("cross_val_score:", mean_score, scores)    
 
     # ✅ Fit complet sur le jeu d'entraînement
     pipe.fit(X, y)
@@ -67,7 +89,7 @@ def cmd_predict(args):
     pipe = joblib.load(args.model_path)
     raw = load_physionet(args.subject, args.runs)
     raw = bandpass_filter(raw, l_freq=8.0, h_freq=30.0)
-    epochs = make_epochs(raw, tmin=0.0, tmax=4.0)
+    epochs = make_epochs(raw, tmin=0.0, tmax=4.0, window_sec=args.window_sec, overlap=args.overlap)
     X = epochs.get_data()
     labels = epochs.events[:, -1]
 
@@ -114,14 +136,25 @@ if __name__ == "__main__":
 
     ptrain = sub.add_parser('train')
     ptrain.add_argument('--subject', type=int, required=True)
-    ptrain.add_argument('--runs', type=int, nargs='+', required=True)
+    ptrain.add_argument('--runs', type=int, nargs='+', required=True,
+                        help='Runs used for training (use distinct runs for testing)')
     ptrain.add_argument('--model-path', default='model.joblib')
     ptrain.add_argument('--show-raw', action='store_true')
+    ptrain.add_argument('--tune', action='store_true')
+    ptrain.add_argument('--window-sec', type=float, default=None)
+    ptrain.add_argument('--overlap', type=float, default=0.5)
+    ptrain.add_argument('--memory', type=str, default=None)
+    ptrain.add_argument('--downsample', type=int, default=None)
+    ptrain.add_argument('--use-features', action='store_true',
+                        help='If set, use FeatureExtractor-based pipeline instead of CSP.')
 
     ppredict = sub.add_parser('predict')
     ppredict.add_argument('--subject', type=int, required=True)
-    ppredict.add_argument('--runs', type=int, nargs='+', required=True)
+    ppredict.add_argument('--runs', type=int, nargs='+', required=True,
+                        help='Runs used for prediction/evaluation (should be different from train runs)')
     ppredict.add_argument('--model-path', default='model.joblib')
+    ppredict.add_argument('--window-sec', type=float, default=None)
+    ppredict.add_argument('--overlap', type=float, default=0.5)
 
     args = parser.parse_args()
     if args.cmd == 'train':
