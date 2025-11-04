@@ -28,7 +28,7 @@ def compute_wavelet_epoch(signal, wavelet='db4', level=3):
     try:
         coeffs = pywt.wavedec(signal, wavelet=wavelet, level=level)
         # ⚡ On résume chaque niveau d’ondelette par son énergie moyenne absolue
-        energies = np.array([np.mean(np.abs(c)) for c in coeffs], dtype=np.float32)
+        energies = np.concatenate([[np.mean(np.abs(c)), np.std(c)] for c in coeffs]).astype(np.float32)
         return energies
     except Exception as e:
         print(f"[⚠️ Wavelet failed for signal of shape {signal.shape}: {e}]")
