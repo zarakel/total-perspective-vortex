@@ -1,14 +1,27 @@
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
-from scipy.linalg import eigh
+from scipy.linalg import eigh as scipy_eigh
+
+# Import custom eigenvalue decomposition (bonus)
+try:
+    from src.eigen_custom import eigh_generalized_custom, eigh_custom
+except ImportError:
+    eigh_generalized_custom = None
+    eigh_custom = None
+
 
 class CSP(BaseEstimator, TransformerMixin):
-    """CSP (Common Spatial Pattern) implementation for 2-class EEG."""
+    """CSP (Common Spatial Pattern) implementation for 2-class EEG.
+    
+    Can use either scipy or custom eigenvalue decomposition (bonus).
+    Set use_custom_eigen=True to use the from-scratch implementation.
+    """
 
-    def __init__(self, n_components=4, reg=1e-10, shrink=0.1):
+    def __init__(self, n_components=4, reg=1e-10, shrink=0.1, use_custom_eigen=False):
         self.n_components = n_components
         self.reg = reg
         self.shrink = shrink
+        self.use_custom_eigen = use_custom_eigen
         self.filters_ = None
         self.n_channels = None
 
@@ -49,7 +62,13 @@ class CSP(BaseEstimator, TransformerMixin):
 
         cov_a, cov_b = covs
         # generalized eigenvalue problem
-        eigvals, eigvecs = eigh(cov_a, cov_a + cov_b + self.reg * np.eye(self.n_channels))
+        B = cov_a + cov_b + self.reg * np.eye(self.n_channels)
+
+        if self.use_custom_eigen and eigh_generalized_custom is not None:
+            print("[CSP] Using CUSTOM eigenvalue decomposition (bonus)")
+            eigvals, eigvecs = eigh_generalized_custom(cov_a, B)
+        else:
+            eigvals, eigvecs = scipy_eigh(cov_a, B)
 
         ix = np.argsort(eigvals)[::-1]
         eigvecs = eigvecs[:, ix]

@@ -5,23 +5,32 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from src.features import FeatureExtractor
 from src.csp_custom import CSP
+from src.lda_custom import LDAClassifier
 import joblib as _joblib
 import numpy as np
 from sklearn.model_selection import StratifiedKFold, cross_val_score, GridSearchCV
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 
-def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None, memory=None, use_features=False):
+def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None,
+                   memory=None, use_features=False, use_custom_clf=False,
+                   use_custom_eigen=False):
     """
-    Construis la pipeline correctement :
-    - si reducer == 'csp' et use_features False : raw -> CSP -> scaler -> clf
-    - si use_features True : raw -> FeatureExtractor -> scaler -> clf
-    (on n'essaie pas de mettre CSP après FeatureExtractor)
+    Build the processing pipeline:
+    - reducer == 'csp' : raw -> CSP -> scaler -> clf
+    - use_features True : raw -> FeatureExtractor -> scaler -> clf
+
+    Bonus flags:
+    - use_custom_clf=True  → use custom LDA instead of LogisticRegression
+    - use_custom_eigen=True → pass to CSP to use custom eigenvalue decomposition
     """
     if reducer_params is None:
         reducer_params = {}
     if classifier is None:
-        classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
+        if use_custom_clf:
+            classifier = LDAClassifier(shrinkage=0.01)
+        else:
+            classifier = LogisticRegression(max_iter=1000, class_weight='balanced')
 
     steps = []
     if use_features:
@@ -34,7 +43,9 @@ def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None, m
         if reducer == 'pca':
             steps.append(('reducer', PCA(**reducer_params.get('pca', {}))))
         elif reducer == 'csp':
-            steps.append(('reducer', CSP(**reducer_params.get('csp', {}))))
+            csp_params = reducer_params.get('csp', {})
+            csp_params['use_custom_eigen'] = use_custom_eigen
+            steps.append(('reducer', CSP(**csp_params)))
         else:
             raise ValueError("reducer must be 'pca' or 'csp' when use_features is False")
         steps.append(('scaler', StandardScaler()))

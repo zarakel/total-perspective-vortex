@@ -1,9 +1,25 @@
 # src/preprocessing.py
 import mne
+import matplotlib.pyplot as plt
+import numpy as np
 
-def visualize_raw(raw, show=True, duration=10):
+def visualize_raw(raw, show=True, duration=10, title=None):
     """Display raw signal in interactive window (requires X11)."""
-    raw.plot(n_channels=10, duration=duration, show=show)
+    fig = raw.plot(n_channels=10, duration=duration, show=False)
+    if title:
+        fig.suptitle(title)
+    plt.show(block=True)
+
+def visualize_spectrum(raw, title=None, fmin=0.5, fmax=50.0):
+    """
+    Plot PSD (Power Spectral Density) of the raw signal.
+    Useful for verifying filtering and exploring frequency content.
+    """
+    fig = raw.compute_psd(fmin=fmin, fmax=fmax).plot(show=False)
+    if title:
+        fig.suptitle(title)
+    plt.tight_layout()
+    plt.show(block=True)
 
 def bandpass_filter(raw, l_freq=8.0, h_freq=30.0):
     """

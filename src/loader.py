@@ -13,6 +13,8 @@ def load_physionet(subject:int, runs:list, preload=True):
     from mne.datasets import eegbci
     files = eegbci.load_data(subject, runs)
     raw = mne.io.concatenate_raws([mne.io.read_raw_edf(f, preload=preload) for f in files])
+    # Standardize channel names (PhysioNet uses 'C3..' instead of 'C3')
+    eegbci.standardize(raw)
     # set montage if available
     try:
         raw.set_montage('standard_1005', on_missing='ignore')
