@@ -131,88 +131,89 @@ def cmd_predict(args):
     plot_confusion(labels[:len(preds)], preds, title="Confusion matrix (prediction stream)")
 
 
-# ── 6 experiments definition ──────────────────────────────────────────
-# Leave-one-repetition-out: train on 4 runs, test on 2 runs (never-learned data)
-EXPERIMENTS = [
-    # Left/Right fist (exec + imagery): runs 3,4 / 7,8 / 11,12
-    {'name': 'L/R Fist (test rep 1)', 'train': [7, 8, 11, 12], 'test': [3, 4]},
-    {'name': 'L/R Fist (test rep 2)', 'train': [3, 4, 11, 12], 'test': [7, 8]},
-    {'name': 'L/R Fist (test rep 3)', 'train': [3, 4, 7, 8],   'test': [11, 12]},
-    # Fists/Feet (exec + imagery): runs 5,6 / 9,10 / 13,14
-    {'name': 'Fists/Feet (test rep 1)', 'train': [9, 10, 13, 14], 'test': [5, 6]},
-    {'name': 'Fists/Feet (test rep 2)', 'train': [5, 6, 13, 14],  'test': [9, 10]},
-    {'name': 'Fists/Feet (test rep 3)', 'train': [5, 6, 9, 10],   'test': [13, 14]},
+# ── 4 experiment types (matching checklist: 4 types of experiment runs) ──
+# For each type, load all 3 runs together and cross-validate (StratifiedKFold k=3).
+# The 4 types are:
+#   Type 1: L/R fist execution (runs 3, 7, 11)
+#   Type 2: L/R fist imagery   (runs 4, 8, 12)
+#   Type 3: Fists/Feet execution (runs 5, 9, 13)
+#   Type 4: Fists/Feet imagery   (runs 6, 10, 14)
+EXPERIMENT_TYPES = [
+    {'name': 'L/R Fist (execution)',   'runs': [3, 7, 11]},
+    {'name': 'L/R Fist (imagery)',     'runs': [4, 8, 12]},
+    {'name': 'Fists/Feet (execution)', 'runs': [5, 9, 13]},
+    {'name': 'Fists/Feet (imagery)',   'runs': [6, 10, 14]},
 ]
 
 
-def _evaluate_subject_experiment(subject, exp, sfreq_cache={}):
-    """Train on exp['train'] runs, test on exp['test'] runs for one subject.
-    Returns accuracy on the test set (never-learned data)."""
+def _evaluate_subject_experiment_type(subject, exp_type):
+    """For one experiment type (3 runs = 3 repetitions):
+    Load all 3 runs, run cross_val_score (StratifiedKFold, k=3).
+    Returns the mean cross-validated accuracy."""
     from src.loader import load_physionet, make_epochs
     from src.preprocessing import bandpass_filter
-    from src.pipeline_model import build_pipeline
+    from src.pipeline_model import build_pipeline, train_and_evaluate
+
+    runs = exp_type['runs']  # e.g. [4, 8, 12]
 
     try:
-        # ── Train ──
-        raw_train = load_physionet(subject, exp['train'])
-        raw_train = bandpass_filter(raw_train, 8.0, 30.0)
-        epochs_train = make_epochs(raw_train, tmin=0.0, tmax=4.0)
-        X_train = epochs_train.get_data()
-        y_train = epochs_train.events[:, -1]
+        raw = load_physionet(subject, runs)
+        raw = bandpass_filter(raw, 8.0, 30.0)
+        epochs = make_epochs(raw, tmin=0.5, tmax=2.5)
+        X = epochs.get_data()
+        y = epochs.events[:, -1]
 
-        if len(np.unique(y_train)) < 2:
-            return None  # skip if single-class
-
-        # ── Test ──
-        raw_test = load_physionet(subject, exp['test'])
-        raw_test = bandpass_filter(raw_test, 8.0, 30.0)
-        epochs_test = make_epochs(raw_test, tmin=0.0, tmax=4.0)
-        X_test = epochs_test.get_data()
-        y_test = epochs_test.events[:, -1]
-
-        if len(np.unique(y_test)) < 2:
+        if len(np.unique(y)) < 2:
             return None
 
         pipe = build_pipeline(
-            sfreq=int(raw_train.info['sfreq']),
+            sfreq=int(raw.info['sfreq']),
             reducer='csp',
-            reducer_params={'csp': {'n_components': 6}}
+            reducer_params={'csp': {'n_components': 8}}
         )
-        pipe.fit(X_train, y_train)
-        acc = pipe.score(X_test, y_test)
-        return acc
+        mean_score, scores = train_and_evaluate(pipe, X, y, cv=3)
+        return mean_score
     except Exception as e:
-        print(f"  [WARN] subject {subject:03d} exp '{exp['name']}': {e}")
+        print(f"  [WARN] subject {subject:03d} exp '{exp_type['name']}': {e}")
         return None
 
 
 def cmd_evaluate_all(args):
-    """Evaluate all 109 subjects on 6 experiments, report mean accuracy."""
+    """Evaluate all subjects on 4 experiment types, report mean accuracy."""
     import warnings
     warnings.filterwarnings('ignore')
 
     n_subjects = getattr(args, 'max_subjects', 109)
-    exp_accs = {i: [] for i in range(len(EXPERIMENTS))}
+    type_accs = {i: [] for i in range(len(EXPERIMENT_TYPES))}
 
     for subj in range(1, n_subjects + 1):
-        for ei, exp in enumerate(EXPERIMENTS):
-            acc = _evaluate_subject_experiment(subj, exp)
+        for ti, exp_type in enumerate(EXPERIMENT_TYPES):
+            acc = _evaluate_subject_experiment_type(subj, exp_type)
             if acc is not None:
-                exp_accs[ei].append(acc)
-                print(f"experiment {ei}: subject {subj:03d}: accuracy = {acc:.4f}")
+                type_accs[ti].append(acc)
+                print(f"type {ti} ({exp_type['name']}): subject {subj:03d}: accuracy = {acc:.4f}")
 
     print("\n" + "=" * 60)
-    print("Mean accuracy of the six different experiments for all subjects:")
-    all_means = []
-    for ei in range(len(EXPERIMENTS)):
-        if exp_accs[ei]:
-            m = np.mean(exp_accs[ei])
-            all_means.append(m)
-            print(f"  experiment {ei} ({EXPERIMENTS[ei]['name']}): accuracy = {m:.4f}")
+    print("Mean accuracy per experiment type (all subjects):")
+    type_means = []
+    for ti in range(len(EXPERIMENT_TYPES)):
+        if type_accs[ti]:
+            m = np.mean(type_accs[ti])
+            type_means.append(m)
+            print(f"  type {ti} ({EXPERIMENT_TYPES[ti]['name']}): mean accuracy = {m:.4f}")
         else:
-            print(f"  experiment {ei}: no valid results")
-    if all_means:
-        print(f"Mean accuracy of {len(EXPERIMENTS)} experiments: {np.mean(all_means):.4f}")
+            print(f"  type {ti}: no valid results")
+    if type_means:
+        global_mean = np.mean(type_means)
+        print(f"\nMean of {len(type_means)} type means: {global_mean:.4f}")
+        if global_mean >= 0.75:
+            print(f"✅ Score >= 75% ({global_mean*100:.1f}%)")
+        else:
+            print(f"⚠️  Score < 75% ({global_mean*100:.1f}%)")
+        # Bonus points: +1 for each 3% over 75%
+        if global_mean > 0.75:
+            bonus = int((global_mean - 0.75) / 0.03)
+            print(f"   Bonus points: +{bonus} (for {(global_mean - 0.75)*100:.1f}% over 75%)")
 
 
 if __name__ == "__main__":

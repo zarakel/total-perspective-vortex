@@ -17,5 +17,9 @@ COPY src/requirements.txt /tmp/requirements.txt
 # Installer les dépendances Python
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
+# Pre-configure MNE data path to avoid interactive prompts
+RUN mkdir -p /root/mne_data /root/.mne && \
+    echo '{"MNE_DATA": "/root/mne_data", "MNE_DATASETS_EEGBCI_PATH": "/root/mne_data"}' > /root/.mne/mne-python.json
+
 WORKDIR /app
 CMD ["python3"]

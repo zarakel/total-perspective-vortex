@@ -1,6 +1,13 @@
 # src/loader.py
 import mne
 import numpy as np
+import os
+
+# Set MNE data path to avoid interactive prompts
+_mne_data_dir = os.path.expanduser('~/mne_data')
+os.makedirs(_mne_data_dir, exist_ok=True)
+os.environ['MNE_DATA'] = _mne_data_dir
+mne.set_config('MNE_DATA', _mne_data_dir, set_env=False)
 
 def load_physionet(subject:int, runs:list, preload=True):
     """

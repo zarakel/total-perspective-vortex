@@ -26,7 +26,6 @@ class CSP(BaseEstimator, TransformerMixin):
         self.n_channels = None
 
     def fit(self, X, y):
-        print(f"[DEBUG] CSP.fit X shape: {X.shape}")
         X = np.asarray(X)
         y = np.asarray(y)
 
@@ -65,7 +64,6 @@ class CSP(BaseEstimator, TransformerMixin):
         B = cov_a + cov_b + self.reg * np.eye(self.n_channels)
 
         if self.use_custom_eigen and eigh_generalized_custom is not None:
-            print("[CSP] Using CUSTOM eigenvalue decomposition (bonus)")
             eigvals, eigvecs = eigh_generalized_custom(cov_a, B)
         else:
             eigvals, eigvecs = scipy_eigh(cov_a, B)
@@ -88,7 +86,6 @@ class CSP(BaseEstimator, TransformerMixin):
         else:
             self.filters_ = eigvecs[:, :n_comp]
 
-        print(f"✅ CSP fitted. Filters shape: {self.filters_.shape}")
         return self
 
     def transform(self, X):
@@ -118,6 +115,5 @@ class CSP(BaseEstimator, TransformerMixin):
             feats.append(np.log(var / np.sum(var)))
 
         feats = np.array(feats)
-        print(f"[DEBUG] CSP.transform output shape: {feats.shape}")
         return feats
 

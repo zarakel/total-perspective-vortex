@@ -55,7 +55,6 @@ def build_pipeline(sfreq, reducer='csp', reducer_params=None, classifier=None,
     return pipe
 
 def train_and_evaluate(pipe, X, y, cv=5, tune=False, param_grid=None, n_jobs=-1, scoring='balanced_accuracy'):
-    print("Unique labels in y:", np.unique(y))
     skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
 
     if tune:
