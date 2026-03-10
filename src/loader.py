@@ -29,7 +29,7 @@ def load_physionet(subject:int, runs:list, preload=True):
         pass
     return raw
 
-def make_epochs(raw, tmin=0.5, tmax=2.5, preload=True, window_sec=None, overlap=0.5):
+def make_epochs(raw, tmin=0.5, tmax=2.5, preload=True, window_sec=None, overlap=0.5, pick_motor=True):
     import mne
     import numpy as np
 
@@ -37,9 +37,20 @@ def make_epochs(raw, tmin=0.5, tmax=2.5, preload=True, window_sec=None, overlap=
     event_id = {k: v for k, v in event_id.items() if k in ["T1", "T2"]}
     if len(event_id) < 2:
         raise ValueError(f"Pas assez de classes valides (trouvées : {list(event_id.keys())})")
-    target_channels = ['C3', 'C4', 'Cz', 'FC3', 'FC4', 'CP3', 'CP4']
-    picks = mne.pick_channels(raw.info['ch_names'], target_channels, ordered=True)
-    picks = mne.pick_types(raw.info, eeg=True, exclude='bads')
+    if pick_motor:
+        # Select sensorimotor channels only (better for CSP with limited data)
+        motor_channels = [
+            'FC5', 'FC3', 'FC1', 'FCz', 'FC2', 'FC4', 'FC6',
+            'C5', 'C3', 'C1', 'Cz', 'C2', 'C4', 'C6',
+            'CP5', 'CP3', 'CP1', 'CPz', 'CP2', 'CP4', 'CP6',
+        ]
+        available = [ch for ch in motor_channels if ch in raw.info['ch_names']]
+        if len(available) >= 10:
+            picks = mne.pick_channels(raw.info['ch_names'], available, ordered=True)
+        else:
+            picks = mne.pick_types(raw.info, eeg=True, exclude='bads')
+    else:
+        picks = mne.pick_types(raw.info, eeg=True, exclude='bads')
     base_epochs = mne.Epochs(raw, events, event_id=event_id, tmin=tmin, tmax=tmax, picks=picks, preload=preload, baseline=None)
 
     # Si pas d'augmentation demandée, retourne les epochs MNE classiques

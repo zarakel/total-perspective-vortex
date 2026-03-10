@@ -132,12 +132,12 @@ def cmd_predict(args):
 
 
 # ── 4 experiment types (matching checklist: 4 types of experiment runs) ──
-# For each type, load all 3 runs together and cross-validate (StratifiedKFold k=3).
+# For each type, load all 3 runs together and cross-validate (StratifiedKFold k=5).
 # The 4 types are:
-#   Type 1: L/R fist execution (runs 3, 7, 11)
-#   Type 2: L/R fist imagery   (runs 4, 8, 12)
-#   Type 3: Fists/Feet execution (runs 5, 9, 13)
-#   Type 4: Fists/Feet imagery   (runs 6, 10, 14)
+#   Type 0: L/R fist execution (runs 3, 7, 11)
+#   Type 1: L/R fist imagery   (runs 4, 8, 12)
+#   Type 2: Fists/Feet execution (runs 5, 9, 13)
+#   Type 3: Fists/Feet imagery   (runs 6, 10, 14)
 EXPERIMENT_TYPES = [
     {'name': 'L/R Fist (execution)',   'runs': [3, 7, 11]},
     {'name': 'L/R Fist (imagery)',     'runs': [4, 8, 12]},
@@ -148,31 +148,57 @@ EXPERIMENT_TYPES = [
 
 def _evaluate_subject_experiment_type(subject, exp_type):
     """For one experiment type (3 runs = 3 repetitions):
-    Load all 3 runs, run cross_val_score (StratifiedKFold, k=3).
-    Returns the mean cross-validated accuracy."""
-    from src.loader import load_physionet, make_epochs
-    from src.preprocessing import bandpass_filter
-    from src.pipeline_model import build_pipeline, train_and_evaluate
+    Load all 3 runs, apply filter bank CSP (FBCSP), run cross_val_score.
+    Returns the mean cross-validated accuracy.
+    
+    Uses optimized configuration:
+    - Broadband 4-40 Hz preprocessing (FBCSP does sub-band filtering)
+    - 21 sensorimotor channels
+    - tmin=0.5s, tmax=3.5s (skip reaction time)
+    - FBCSP with 3 sub-bands: mu (8-12), low-beta (12-20), high-beta (20-30)
+    - 4 CSP components per band (12 features total)
+    - Adaptive 200µV epoch rejection (fallback to no rejection)
+    - LDA classifier with auto shrinkage
+    """
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+    from sklearn.model_selection import StratifiedKFold, cross_val_score
 
-    runs = exp_type['runs']  # e.g. [4, 8, 12]
+    runs = exp_type['runs']
 
     try:
         raw = load_physionet(subject, runs)
-        raw = bandpass_filter(raw, 8.0, 30.0)
-        epochs = make_epochs(raw, tmin=0.5, tmax=2.5)
-        X = epochs.get_data()
-        y = epochs.events[:, -1]
+        # Broadband filter for FBCSP (sub-band filtering done inside pipeline)
+        raw = bandpass_filter(raw, 4.0, 40.0)
+        epochs = make_epochs(raw, tmin=0.5, tmax=3.5, pick_motor=True)
 
-        if len(np.unique(y)) < 2:
+        # Adaptive artifact rejection: try 200µV, fall back if too few epochs
+        epochs_rej = epochs.copy().drop_bad(reject=dict(eeg=200e-6))
+        X_rej = epochs_rej.get_data()
+        y_rej = epochs_rej.events[:, -1]
+        if (len(np.unique(y_rej)) >= 2 and len(y_rej) >= 10
+                and min(np.bincount(y_rej - y_rej.min())) >= 2):
+            X, y = X_rej, y_rej
+        else:
+            X = epochs.get_data()
+            y = epochs.events[:, -1]
+
+        if len(np.unique(y)) < 2 or len(y) < 6:
             return None
 
         pipe = build_pipeline(
             sfreq=int(raw.info['sfreq']),
             reducer='csp',
-            reducer_params={'csp': {'n_components': 8}}
+            reducer_params={'csp': {'n_components': 4, 'shrink': 0.03, 'log_type': 'var'}},
+            classifier=LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto'),
+            use_fbcsp=True,
+            fbcsp_bands=[(8, 12), (12, 20), (20, 30)],
         )
-        mean_score, scores = train_and_evaluate(pipe, X, y, cv=3)
-        return mean_score
+        n_cv = min(5, min(np.bincount(y - y.min())))
+        if n_cv < 2:
+            return None
+        skf = StratifiedKFold(n_splits=n_cv, shuffle=True, random_state=42)
+        scores = cross_val_score(pipe, X, y, cv=skf, scoring='accuracy', n_jobs=-1)
+        return scores.mean()
     except Exception as e:
         print(f"  [WARN] subject {subject:03d} exp '{exp_type['name']}': {e}")
         return None
@@ -191,29 +217,27 @@ def cmd_evaluate_all(args):
             acc = _evaluate_subject_experiment_type(subj, exp_type)
             if acc is not None:
                 type_accs[ti].append(acc)
-                print(f"type {ti} ({exp_type['name']}): subject {subj:03d}: accuracy = {acc:.4f}")
+                print(f"experiment {ti}: subject {subj:03d}: accuracy = {acc:.4f}")
 
-    print("\n" + "=" * 60)
-    print("Mean accuracy per experiment type (all subjects):")
+    print("\nMean accuracy of the four different experiments for all subjects:")
     type_means = []
     for ti in range(len(EXPERIMENT_TYPES)):
         if type_accs[ti]:
             m = np.mean(type_accs[ti])
             type_means.append(m)
-            print(f"  type {ti} ({EXPERIMENT_TYPES[ti]['name']}): mean accuracy = {m:.4f}")
+            print(f"experiment {ti} ({EXPERIMENT_TYPES[ti]['name']}): accuracy = {m:.4f}")
         else:
-            print(f"  type {ti}: no valid results")
+            print(f"experiment {ti}: no valid results")
     if type_means:
         global_mean = np.mean(type_means)
-        print(f"\nMean of {len(type_means)} type means: {global_mean:.4f}")
+        print(f"\nMean accuracy of {len(type_means)} experiments: {global_mean:.4f}")
         if global_mean >= 0.75:
-            print(f"✅ Score >= 75% ({global_mean*100:.1f}%)")
-        else:
-            print(f"⚠️  Score < 75% ({global_mean*100:.1f}%)")
-        # Bonus points: +1 for each 3% over 75%
-        if global_mean > 0.75:
+            print(f"Score >= 75% ({global_mean*100:.1f}%)")
             bonus = int((global_mean - 0.75) / 0.03)
-            print(f"   Bonus points: +{bonus} (for {(global_mean - 0.75)*100:.1f}% over 75%)")
+            if bonus > 0:
+                print(f"Bonus points: +{bonus} (for {(global_mean - 0.75)*100:.1f}% over 75%)")
+        else:
+            print(f"Score < 75% ({global_mean*100:.1f}%)")
 
 
 if __name__ == "__main__":
@@ -247,7 +271,7 @@ if __name__ == "__main__":
     ppredict.add_argument('--overlap', type=float, default=0.5)
 
     pevalall = sub.add_parser('evaluate-all',
-                              help='Run all 109 subjects on 6 experiments (train/test split by runs)')
+                              help='Evaluate all 109 subjects on 4 experiment types')
     pevalall.add_argument('--max-subjects', type=int, default=109,
                           help='Number of subjects to evaluate (default: all 109)')
 

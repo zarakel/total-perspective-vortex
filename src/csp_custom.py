@@ -17,11 +17,14 @@ class CSP(BaseEstimator, TransformerMixin):
     Set use_custom_eigen=True to use the from-scratch implementation.
     """
 
-    def __init__(self, n_components=4, reg=1e-10, shrink=0.1, use_custom_eigen=False):
+    def __init__(self, n_components=4, reg=1e-10, shrink=0.1, use_custom_eigen=False,
+                 cov_method='auto', log_type='ratio'):
         self.n_components = n_components
         self.reg = reg
         self.shrink = shrink
         self.use_custom_eigen = use_custom_eigen
+        self.cov_method = cov_method
+        self.log_type = log_type  # 'ratio' = log(var/sum), 'var' = log(var)
         self.filters_ = None
         self.n_channels = None
 
@@ -48,7 +51,8 @@ class CSP(BaseEstimator, TransformerMixin):
                     xi = xi.T
                 # covariance normalized by trace
                 cov_i = np.dot(xi, xi.T) / xi.shape[1]
-                cov_i /= np.trace(cov_i) if np.trace(cov_i) != 0 else 1.0
+                trace = np.trace(cov_i)
+                cov_i /= trace if trace != 0 else 1.0
                 # shrinkage: mélange vers une matrice diagonale (utile si peu d'exemples)
                 if self.shrink and 0.0 < self.shrink < 1.0:
                     avg = np.trace(cov_i) / self.n_channels
@@ -112,7 +116,10 @@ class CSP(BaseEstimator, TransformerMixin):
             # ✅ Calcul des log-variances de manière stable
             var = np.var(Xf, axis=1)
             var = np.maximum(var, 1e-12)
-            feats.append(np.log(var / np.sum(var)))
+            if self.log_type == 'var':
+                feats.append(np.log(var))
+            else:
+                feats.append(np.log(var / np.sum(var)))
 
         feats = np.array(feats)
         return feats

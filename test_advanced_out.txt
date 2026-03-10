@@ -1,0 +1,25 @@
+=== Advanced optimization on 10 subjects ===
+
+--- Baseline (current best) ---
+FBCSP3_nc4_s003_LDA: 0.7395 [fail] skip=0/40 (T0=0.662(10) T1=0.644(10) T2=0.871(10) T3=0.781(10))
+
+--- More sub-bands ---
+FBCSP5_nc4_s003_LDA: 0.7440 [fail] skip=0/40 (T0=0.676(10) T1=0.633(10) T2=0.880(10) T3=0.787(10))
+FBCSP6_nc4_s003_LDA: 0.7490 [fail] skip=0/40 (T0=0.712(10) T1=0.625(10) T2=0.874(10) T3=0.785(10))
+FBCSP5_nc2_s003_LDA: 0.7518 [PASS] skip=0/40 (T0=0.697(10) T1=0.642(10) T2=0.870(10) T3=0.798(10))
+FBCSP6_nc2_s003_LDA: 0.7340 [fail] skip=0/40 (T0=0.679(10) T1=0.622(10) T2=0.851(10) T3=0.783(10))
+
+--- Ensemble classifiers ---
+FBCSP3_nc4_VoteSoft: 0.7310 [fail] skip=0/40 (T0=0.663(10) T1=0.639(10) T2=0.864(10) T3=0.758(10))
+FBCSP3_nc4_VoteHard: 0.7230 [fail] skip=0/40 (T0=0.653(10) T1=0.629(10) T2=0.856(10) T3=0.753(10))
+FBCSP5_nc2_VoteSoft: 0.7472 [fail] skip=0/40 (T0=0.695(10) T1=0.640(10) T2=0.860(10) T3=0.794(10))
+
+--- Hybrid FBCSP + PSD ---
+Hybrid_FBCSP3+PSD_LDA: 0.7278 [fail] skip=0/40 (T0=0.644(10) T1=0.646(10) T2=0.861(10) T3=0.760(10))
+Hybrid_FBCSP3+PSD_VoteSoft: 0.7194 [fail] skip=0/40 (T0=0.639(10) T1=0.645(10) T2=0.845(10) T3=0.749(10))
+
+--- SVM classifiers ---
+FBCSP5_nc2_SVM_rbf: 0.7514 [PASS] skip=0/40 (T0=0.720(10) T1=0.656(10) T2=0.845(10) T3=0.784(10))
+FBCSP3_nc4_SVM_rbf: 0.7178 [fail] skip=0/40 (T0=0.654(10) T1=0.621(10) T2=0.847(10) T3=0.750(10))
+
+Done!
