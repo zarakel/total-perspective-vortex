@@ -11,7 +11,7 @@ Le but : entraîner un pipeline sklearn capable de prédire si un sujet imagine 
 
 ```
 EEG brut (64 canaux × N temps)
-    │
+    │dans un premier temps
     ▼
 Filtrage passe-bande FIR (8-30 Hz)      ← src/preprocessing.py
     │
