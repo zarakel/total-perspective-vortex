@@ -211,12 +211,15 @@ def cmd_evaluate_all(args):
 
     n_subjects = getattr(args, 'max_subjects', 109)
     type_accs = {i: [] for i in range(len(EXPERIMENT_TYPES))}
+    # Track per-subject scores: {subject_id: [acc_type0, acc_type1, ...]}
+    subject_scores = {}
 
     for subj in range(1, n_subjects + 1):
         for ti, exp_type in enumerate(EXPERIMENT_TYPES):
             acc = _evaluate_subject_experiment_type(subj, exp_type)
             if acc is not None:
                 type_accs[ti].append(acc)
+                subject_scores.setdefault(subj, []).append(acc)
                 print(f"experiment {ti}: subject {subj:03d}: accuracy = {acc:.4f}")
 
     print("\nMean accuracy of the four different experiments for all subjects:")
@@ -232,12 +235,54 @@ def cmd_evaluate_all(args):
         global_mean = np.mean(type_means)
         print(f"\nMean accuracy of {len(type_means)} experiments: {global_mean:.4f}")
         if global_mean >= 0.75:
-            print(f"Score >= 75% ({global_mean*100:.1f}%)")
+            print(f"Score = {global_mean*100:.1f}%")
             bonus = int((global_mean - 0.75) / 0.03)
             if bonus > 0:
                 print(f"Bonus points: +{bonus} (for {(global_mean - 0.75)*100:.1f}% over 75%)")
         else:
             print(f"Score < 75% ({global_mean*100:.1f}%)")
+
+    # ── Per-subject breakdown ──
+    if subject_scores:
+        subj_means = {s: np.mean(accs) for s, accs in subject_scores.items()}
+        overall = np.mean(list(subj_means.values()))
+        sorted_subjs = sorted(subj_means.items(), key=lambda x: x[1])
+
+        print("\n" + "=" * 60)
+        print("PER-SUBJECT BREAKDOWN (sorted worst → best)")
+        print("=" * 60)
+        strong, medium, weak = [], [], []
+        for subj, m in sorted_subjs:
+            delta = m - overall
+            if m >= 0.80:
+                tag = "★"
+                strong.append(subj)
+            elif m >= 0.60:
+                tag = " "
+                medium.append(subj)
+            else:
+                tag = "▼"
+                weak.append(subj)
+            bar_len = int(m * 40)
+            bar = "█" * bar_len + "░" * (40 - bar_len)
+            print(f"  S{subj:03d} {tag} {bar} {m*100:5.1f}%  ({delta:+5.1f}%)")
+
+        print("-" * 60)
+        print(f"  Overall mean: {overall*100:.1f}%  |  "
+              f"{len(strong)} strong (≥80%)  "
+              f"{len(medium)} medium (60-80%)  "
+              f"{len(weak)} weak (<60%)")
+        if weak:
+            weak_mean = np.mean([subj_means[s] for s in weak])
+            without_weak = np.mean([subj_means[s] for s in subj_means
+                                    if s not in weak])
+            print(f"\n  ⚠ Weak subjects drag the average down:")
+            print(f"    Mean WITH  weak subjects: {overall*100:.1f}%")
+            print(f"    Mean WITHOUT weak subjects: {without_weak*100:.1f}%")
+            print(f"    Weak subjects mean: {weak_mean*100:.1f}%")
+            print(f"    Impact: {(without_weak - overall)*100:+.1f}% "
+                  f"({len(weak)} subjects out of {len(subj_means)})")
+        print("=" * 60)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,0 @@
-Dans le pipeline, quelle place a la CSP, le dimension reducing algorithm ? C'est un transformer c 'est bien cela ? Un algo de reduction de dimensionnalite agit comme un tranfor;eur, avant qu'un autre algo ne vienne classsifie la matrice obtenu.
-
-Autres question, est-ce que les classes T1, T2, pour les nommer sont dynamiques ? Ou représentent elles toujours la meme chose ? Si elles sont dynamiques, ce qui determine ce qu'elles sont est quoi ? Le fait que l'on discerne une covartiance particuliere entre deux classes dans un eigen vector donné ? 
-Dans le cas ou ce sont toujours les memes, que'est- ce que c'est ?

@@ -79,10 +79,10 @@ docker compose run --rm matplotlib python tpv.py predict \
   --subject 1 --runs 3 7 11 --model-path model.joblib
 ```
 
-### Evaluate-all (109 sujets × 6 expériences)
+### Evaluate-all (109 sujets × 4 types d'expériences)
 
 ```bash
-# Évaluation complète (Leave-one-repetition-out)
+# Évaluation complète (StratifiedKFold cross-validation)
 docker compose run --rm matplotlib python tpv.py evaluate-all
 
 # Test rapide sur N sujets
@@ -153,8 +153,8 @@ Chaque triplet (ex: runs 4, 8, 12) correspond aux **3 répétitions** de la mêm
 - **`load_physionet()`** : téléchargement automatique via `mne.datasets.eegbci`, standardisation des noms de canaux (`eegbci.standardize()`), montage `standard_1005`.
 - **`make_epochs()`** : 
   - Sélection des événements T1 (classe 1) et T2 (classe 2)
-  - Sélection des canaux EEG uniquement (`pick_types(eeg=True)`)
-  - Fenêtre temporelle : `tmin=0.0` à `tmax=4.0` par défaut
+  - Sélection des 21 canaux sensori-moteurs par défaut (`pick_motor=True`) : FC5/3/1/z/2/4/6, C5/3/1/z/2/4/6, CP5/3/1/z/2/4/6
+  - Fenêtre temporelle : `tmin=0.5` à `tmax=2.5` par défaut (la commande `train` surcharge à `tmin=0.0, tmax=4.0`)
   - Option d'augmentation par fenêtrage chevauchant (`window_sec` + `overlap`)
   - ⚠️ Le fenêtrage chevauchant crée des epochs non-indépendants — risque de data leakage si utilisé avec cross_val_score. Désactivé par défaut (`window_sec=None`).
 
@@ -170,14 +170,20 @@ Implémentation from scratch respectant `BaseEstimator` + `TransformerMixin` skl
 
 2. **`transform(X)`** :
    - Projection : `X_csp = W^T · X`
-   - Extraction : `features = log(var(X_csp) / Σvar(X_csp))` → vecteur `(n_epochs, n_components)`
+   - Extraction (paramètre `log_type`) :
+     - `'ratio'` (défaut) : `features = log(var(X_csp) / Σvar(X_csp))`
+     - `'var'` : `features = log(var(X_csp))` — utilisé par evaluate-all (FBCSP)
+   - Résultat : vecteur `(n_epochs, n_components)`
 
 Le CSP agit donc à la fois comme **réducteur de dimensionnalité spatiale** ET **extracteur de features**.
 
 ### `src/pipeline_model.py` — Pipeline & Évaluation
 
-- **`build_pipeline()`** : construit un `Pipeline` sklearn avec les étapes CSP → StandardScaler → Classifieur (ou FeatureExtractor → StandardScaler → Classifieur)
-- **`train_and_evaluate()`** : `StratifiedKFold` + `cross_val_score` avec `balanced_accuracy`
+- **`build_pipeline()`** : construit un `Pipeline` sklearn. 3 modes :
+  - CSP classique : CSP → StandardScaler → Classifieur
+  - **FBCSP** (`use_fbcsp=True`) : `FeatureUnion` de `BandpassCSP` sur plusieurs sous-bandes (mu, low-beta, high-beta) → StandardScaler → Classifieur. Chaque `BandpassCSP` applique un filtre passe-bande + CSP indépendant.
+  - FeatureExtractor : PSD + wavelets → StandardScaler → Classifieur
+- **`train_and_evaluate()`** : `StratifiedKFold` + `cross_val_score` avec `accuracy`
 - **GridSearchCV** : recherche automatique sur `n_components`, `C`, type de classifieur, kernel SVM
 
 ### `src/features.py` — FeatureExtractor (pipeline alternatif)
@@ -227,22 +233,30 @@ Décomposition en ondelettes (`db4`, niveau 3) pour capturer l'information temps
 
 ---
 
-## 8. Mode `evaluate-all` — Leave-One-Repetition-Out
+## 8. Mode `evaluate-all` — FBCSP + StratifiedKFold
 
-Le dataset a 3 répétitions par tâche. Pour chaque évaluation :
-- **Train** : 2 répétitions (4 runs)
-- **Test** : 1 répétition (2 runs) — données jamais vues
+Pour chaque sujet, 4 types d'expériences sont évalués indépendamment.
+Chaque type charge ses 3 runs (3 répétitions) ensemble, puis effectue une cross-validation `StratifiedKFold` (k=5, shuffle, seed=42).
 
-6 expériences sont évaluées par sujet :
+| # | Type d'expérience | Runs |
+|---|---|---|
+| 0 | L/R Fist (execution) | 3, 7, 11 |
+| 1 | L/R Fist (imagery) | 4, 8, 12 |
+| 2 | Fists/Feet (execution) | 5, 9, 13 |
+| 3 | Fists/Feet (imagery) | 6, 10, 14 |
 
-| # | Expérience | Train | Test |
-|---|---|---|---|
-| 0 | L/R Fist (test rép. 1) | runs 7, 8, 11, 12 | runs 3, 4 |
-| 1 | L/R Fist (test rép. 2) | runs 3, 4, 11, 12 | runs 7, 8 |
-| 2 | L/R Fist (test rép. 3) | runs 3, 4, 7, 8 | runs 11, 12 |
-| 3 | Fists/Feet (test rép. 1) | runs 9, 10, 13, 14 | runs 5, 6 |
-| 4 | Fists/Feet (test rép. 2) | runs 5, 6, 13, 14 | runs 9, 10 |
-| 5 | Fists/Feet (test rép. 3) | runs 5, 6, 9, 10 | runs 13, 14 |
+### Configuration optimisée
+
+- Filtre passe-bande large : **4-40 Hz** (le FBCSP fait le découpage en sous-bandes)
+- Fenêtre temporelle : **tmin=0.5s, tmax=3.5s** (évite le temps de réaction)
+- **21 canaux sensori-moteurs** (`pick_motor=True`)
+- **Rejet adaptatif** : seuil 200 µV, fallback si trop d'epochs rejetées
+- **FBCSP** (Filter Bank CSP) : 3 sous-bandes (8-12 Hz mu, 12-20 Hz low-beta, 20-30 Hz high-beta) × 4 composantes CSP = **12 features**
+- Classifieur : **LDA** (`LinearDiscriminantAnalysis`, shrinkage='auto')
+
+### Per-subject breakdown
+
+À la fin de l'évaluation, un tableau trié affiche chaque sujet du pire au meilleur, avec l'impact des sujets faibles (< 60%, phénomène de "BCI illiteracy") sur la moyenne globale.
 
 Mean accuracy attendue ≥ 60% sur l'ensemble des sujets/expériences.
 

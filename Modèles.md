@@ -1,10 +1,10 @@
-ENTRÉE : EEG brut du sujet (64 capteurs × 5 min de signal)
+ENTRÉE : EEG brut du sujet (21 capteurs sensori-moteurs × 5 min de signal)
     │
     ▼
-FILTRAGE 8-30 Hz (identique dans les 3 variantes)
+FILTRAGE 8-30 Hz (identique dans les 3 variantes train)
     │
     ▼
-EPOCHAGE (identique dans les 3 variantes)
+EPOCHAGE (identique dans les 3 variantes train)
     ~45 epochs étiquetés T1 ou T2
     │
     ▼
@@ -19,9 +19,9 @@ CSP.fit() — uses scipy.linalg.eigh (optimisé en C/Fortran)
     └── scipy.eigh(Σ₁, Σ₁+Σ₂)
         → Boîte noire : on donne deux matrices, ça retourne
           les eigenvalues et eigenvectors directement
-        → Très rapide (~0.001s pour 64×64)
+        → Très rapide (~0.001s pour 21×21)
     │
-CSP.transform() → 6 log-variances par epoch
+CSP.transform() → 8 log-variances par epoch
     │
 StandardScaler
     │
@@ -29,12 +29,12 @@ LogisticRegression (classifieur par défaut)
     │
     ├── ENTRAÎNEMENT (gradient descent) :
     │   │
-    │   │  Initialise : w = [0, 0, 0, 0, 0, 0], b = 0
+    │   │  Initialise : w = [0, 0, 0, 0, 0, 0, 0, 0], b = 0
     │   │
     │   │  Pour chaque itération (jusqu'à 1000 max) :
     │   │    │
     │   │    ├── Pour chaque epoch, calcule :
-    │   │    │     score = w₁·f₁ + w₂·f₂ + ... + w₆·f₆ + b
+    │   │    │     score = w₁·f₁ + w₂·f₂ + ... + w₈·f₈ + b
     │   │    │     probabilité = 1 / (1 + e^(-score))     ← sigmoïde
     │   │    │
     │   │    ├── Calcule l'erreur (log-loss) :
@@ -78,12 +78,12 @@ CSP.fit() — uses eigen_custom.py (from scratch en Python)
         ├── Cholesky : B = L·Lᵀ  (décompose B en "racine carrée")
         │   Transforme Av=λBv en problème standard Cv=λv
         │
-        ├── Householder : C (64×64 pleine) → T (64×64 tridiagonale)
-        │   COÛT : O(n³) = 262k opérations, UNE FOIS
+        ├── Householder : C (21×21 pleine) → T (21×21 tridiagonale)
+        │   COÛT : O(n³) = 9261 opérations, UNE FOIS
         │
         ├── QR iteration + Wilkinson shift :
         │   T (tridiagonale) → D (diagonale)
-        │   ~3 itérations par eigenvalue × 64 eigenvalues
+        │   ~3 itérations par eigenvalue × 21 eigenvalues
         │   Chaque itération : rotation de Givens (O(n))
         │
         └── Back-transform : v = L⁻ᵀ · u
@@ -92,7 +92,7 @@ CSP.fit() — uses eigen_custom.py (from scratch en Python)
         → Même résultat que scipy, mais ~50× plus lent (Python vs C)
         → Intérêt : montrer qu'on comprend l'algorithme sous le capot
     │
-CSP.transform() → 6 log-variances par epoch (identique)
+CSP.transform() → 8 log-variances par epoch (identique)
     │
 StandardScaler (identique)
     │
@@ -147,17 +147,17 @@ PAS de CSP ! Remplacé par FeatureExtractor :
     │     Pour chaque capteur × chaque sous-bande :
     │       (8-12 Hz), (12-16 Hz), (16-25 Hz), (25-30 Hz)
     │     Calcule la puissance spectrale moyenne → log1p
-    │     Résultat : 64 capteurs × 4 bandes = 256 features PSD
+    │     Résultat : 21 capteurs × 4 bandes = 84 features PSD
     │
     └── Wavelets (bonus, activé par défaut) :
           Pour chaque capteur :
             Décompose le signal en ondelettes db4 (3 niveaux)
             Extrait l'énergie (mean + std) par niveau
-            Résultat : 64 capteurs × 8 features wavelet = 512 features
+            Résultat : 21 capteurs × 8 features wavelet = 168 features
           │
-          Total : 256 + 512 = 768 features par epoch
+          Total : 84 + 168 = 252 features par epoch
     │
-StandardScaler (normalise les 768 features)
+StandardScaler (normalise les 252 features)
     │
 Classifieur (LogReg ou LDA)
     │
@@ -165,7 +165,42 @@ Classifieur (LogReg ou LDA)
 SORTIE : prédiction
 
     ⚠️ Cette variante est souvent MOINS performante que le CSP car :
-    - Beaucoup plus de features (768 vs 6) → risque d'overfitting
+    - Beaucoup plus de features (252 vs 8) → risque d'overfitting
     - Les features PSD/wavelet ne sont pas optimisées pour la discrimination
       entre classes (contrairement au CSP qui est supervisé)
     - Utile comme comparaison ou comme bonus
+
+════════════════════════════════════════════════════════════════
+     VARIANTE 4 : evaluate-all (FBCSP — Filter Bank CSP)
+════════════════════════════════════════════════════════════════
+    │
+FILTRAGE 4-40 Hz (bande large, le FBCSP découpe ensuite)
+    │
+EPOCHAGE tmin=0.5s tmax=3.5s (évite le temps de réaction)
+    │
+Rejet adaptatif 200µV (supprime les epochs avec artefacts)
+    │
+FBCSP = 3 × CSP en parallèle (FeatureUnion sklearn) :
+    │
+    ├── Sous-bande mu (8-12 Hz) → filtre passe-bande → CSP → 4 features
+    ├── Sous-bande low-beta (12-20 Hz) → filtre → CSP → 4 features
+    └── Sous-bande high-beta (20-30 Hz) → filtre → CSP → 4 features
+          │
+          Concaténation : 4 × 3 = 12 features par epoch
+    │
+StandardScaler
+    │
+LDA (LinearDiscriminantAnalysis, shrinkage='auto')
+    │
+    ├── PRÉDICTION : même logique que le LDA custom
+    │     (projection + seuillage)
+    │
+    ▼
+SORTIE : prédiction
+
+    ✅ Cette variante est la PLUS performante car :
+    - FBCSP capture les différences spectrales entre sous-bandes
+      (ERD mu ≠ ERD beta selon le sujet)
+    - Le rejet d'artefacts nettoie les données
+    - tmin=0.5s élimine le temps de réaction (signal non-informatif)
+    - LDA avec shrinkage est optimal pour peu d'échantillons
