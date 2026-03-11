@@ -82,11 +82,15 @@ docker compose run --rm matplotlib python tpv.py predict \
 ### Evaluate-all (109 sujets × 4 types d'expériences)
 
 ```bash
-# Évaluation complète (StratifiedKFold cross-validation)
+# Évaluation complète sur PhysioNet (StratifiedKFold cross-validation)
 docker compose run --rm matplotlib python tpv.py evaluate-all
 
 # Test rapide sur N sujets
 docker compose run --rm matplotlib python tpv.py evaluate-all --max-subjects 5
+
+# Évaluation sur un autre dataset : BCI Competition IV-2a (9 sujets, 22 canaux)
+docker compose run --rm matplotlib python tpv.py evaluate-all --dataset bci4-2a
+docker compose run --rm matplotlib python tpv.py evaluate-all --dataset bci4-2a --max-subjects 3
 ```
 
 ### Arguments disponibles
@@ -104,6 +108,7 @@ docker compose run --rm matplotlib python tpv.py evaluate-all --max-subjects 5
 | `--use-custom-clf` | `false` | **Bonus** : classifieur LDA custom |
 | `--use-custom-eigen` | `false` | **Bonus** : eigenvalue decomposition custom |
 | `--max-subjects` | `109` | Nombre de sujets pour evaluate-all |
+| `--dataset` | `physionet` | Dataset pour evaluate-all : `physionet` ou `bci4-2a` |
 
 ---
 
@@ -260,12 +265,22 @@ Chaque type charge ses 3 runs (3 répétitions) ensemble, puis effectue une cros
 
 Mean accuracy attendue ≥ 60% sur l'ensemble des sujets/expériences.
 
+### Dataset alternatif : BCI Competition IV-2a
+
+Le pipeline supporte également le dataset **BCI Competition IV dataset 2a** (9 sujets, 22 canaux EEG, 250 Hz) via le package **MOABB**. Ce dataset est un benchmark de référence en BCI.
+
+```bash
+python tpv.py evaluate-all --dataset bci4-2a
+```
+
+Même pipeline FBCSP, mêmes paramètres. Le score obtenu (~81%) est supérieur à PhysioNet (~74%) grâce à une meilleure qualité de signal (250 Hz vs 160 Hz, protocole mieux contrôlé).
+
 ---
 
 ## 9. Dépendances
 
 ```
-numpy, scipy, mne, scikit-learn, matplotlib, joblib, PyWavelets
+numpy, scipy, mne, scikit-learn, matplotlib, joblib, PyWavelets, moabb
 ```
 
 Installées automatiquement via Docker (`src/requirements.txt`).

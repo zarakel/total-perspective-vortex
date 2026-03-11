@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import joblib
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-from src.loader import load_physionet, make_epochs
+from src.loader import load_physionet, load_bci4_2a, make_epochs
 from src.preprocessing import bandpass_filter, visualize_raw, visualize_spectrum
 from src.pipeline_model import build_pipeline, train_and_evaluate
 from src.stream_simulator import stream_epochs
@@ -209,6 +209,10 @@ def cmd_evaluate_all(args):
     import warnings
     warnings.filterwarnings('ignore')
 
+    dataset = getattr(args, 'dataset', 'physionet')
+    if dataset == 'bci4-2a':
+        return _evaluate_bci4(args)
+
     n_subjects = getattr(args, 'max_subjects', 109)
     type_accs = {i: [] for i in range(len(EXPERIMENT_TYPES))}
     # Track per-subject scores: {subject_id: [acc_type0, acc_type1, ...]}
@@ -285,6 +289,55 @@ def cmd_evaluate_all(args):
         print("=" * 60)
 
 
+def _evaluate_bci4(args):
+    """Evaluate on BCI Competition IV dataset 2a (9 subjects, 22 channels).
+    Uses the same FBCSP pipeline as PhysioNet evaluate-all.
+    """
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+    from sklearn.model_selection import StratifiedKFold, cross_val_score
+
+    n_subjects = min(getattr(args, 'max_subjects', 9), 9)
+    subject_scores = {}
+
+    for subj in range(1, n_subjects + 1):
+        try:
+            raw = load_bci4_2a(subj)
+            raw = bandpass_filter(raw, 4.0, 40.0)
+            # BCI IV-2a annotations: 'left_hand' and 'right_hand'
+            epochs = make_epochs(raw, tmin=0.5, tmax=3.5, pick_motor=True,
+                                 event_labels=['left_hand', 'right_hand'])
+            X = epochs.get_data()
+            y = epochs.events[:, -1]
+
+            if len(np.unique(y)) < 2 or len(y) < 6:
+                print(f"  [SKIP] BCI4 subject {subj}: not enough data")
+                continue
+
+            pipe = build_pipeline(
+                sfreq=int(raw.info['sfreq']),
+                reducer='csp',
+                reducer_params={'csp': {'n_components': 4, 'shrink': 0.03, 'log_type': 'var'}},
+                classifier=LinearDiscriminantAnalysis(solver='lsqr', shrinkage='auto'),
+                use_fbcsp=True,
+                fbcsp_bands=[(8, 12), (12, 20), (20, 30)],
+            )
+            n_cv = min(5, min(np.bincount(y - y.min())))
+            if n_cv < 2:
+                continue
+            skf = StratifiedKFold(n_splits=n_cv, shuffle=True, random_state=42)
+            scores = cross_val_score(pipe, X, y, cv=skf, scoring='accuracy', n_jobs=-1)
+            acc = scores.mean()
+            subject_scores[subj] = acc
+            print(f"BCI4-2a subject {subj:02d}: accuracy = {acc:.4f}")
+        except Exception as e:
+            print(f"  [WARN] BCI4 subject {subj}: {e}")
+
+    if subject_scores:
+        overall = np.mean(list(subject_scores.values()))
+        print(f"\nBCI Competition IV-2a: mean accuracy = {overall:.4f} ({overall*100:.1f}%)")
+        print(f"  {len(subject_scores)} subjects evaluated")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='cmd')
@@ -316,9 +369,12 @@ if __name__ == "__main__":
     ppredict.add_argument('--overlap', type=float, default=0.5)
 
     pevalall = sub.add_parser('evaluate-all',
-                              help='Evaluate all 109 subjects on 4 experiment types')
+                              help='Evaluate all subjects on 4 experiment types')
     pevalall.add_argument('--max-subjects', type=int, default=109,
                           help='Number of subjects to evaluate (default: all 109)')
+    pevalall.add_argument('--dataset', type=str, default='physionet',
+                          choices=['physionet', 'bci4-2a'],
+                          help='Dataset to evaluate (default: physionet)')
 
     args = parser.parse_args()
     if args.cmd == 'train':
